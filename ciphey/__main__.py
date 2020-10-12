@@ -1,3 +1,4 @@
-from ciphey import ciphey
+from .ciphey import main
+
 if __name__ == "__main__":
-    ciphey.main()
+    main()

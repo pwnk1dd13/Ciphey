@@ -5,7 +5,7 @@
 ██║     ██║██╔═══╝ ██╔══██║██╔══╝    ╚██╔╝  
 ╚██████╗██║██║     ██║  ██║███████╗   ██║ 
 https://github.com/ciphey
-https://docs.ciphey.online
+https://github.com/Ciphey/Ciphey/wiki
 
 The cycle goes:
 main -> argparsing (if needed) -> call_encryption -> new Ciphey object -> decrypt() -> produceProbTable ->
@@ -15,10 +15,10 @@ import os
 import warnings
 import argparse
 import sys
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Union
 import bisect
 
-from ciphey.iface import SearchLevel
+from ciphey.iface import SearchLevel, registry
 from . import iface
 
 from rich import print
@@ -35,9 +35,11 @@ import time
 warnings.filterwarnings("ignore")
 
 
-def decrypt(config: iface.Config, ctext: Any) -> List[SearchLevel]:
+def decrypt(config: iface.Config, ctext: Any) -> Union[str, bytes]:
     """A simple alias for searching a ctext and makes the answer pretty"""
-    res: iface.SearchResult = config.objs["searcher"].search(ctext)
+    res: Optional[iface.SearchResult] = config.objs["searcher"].search(ctext)
+    if res is None:
+        return "Failed to crack"
     if config.verbosity < 0:
         return res.path[-1].result.value
     else:
@@ -65,13 +67,6 @@ def print_help(ctx):
     "-t", "--text", help="The ciphertext you want to decrypt.", type=str,
 )
 @click.option(
-    "-i",
-    "--info",
-    help="Do you want information on the cipher used?",
-    type=bool,
-    is_flag=True,
-)
-@click.option(
     "-q", "--quiet", help="Decrease verbosity", type=int, count=True, default=None
 )
 @click.option(
@@ -97,13 +92,6 @@ def print_help(ctx):
     "-l", "--list-params", help="List the parameters of the selected module", type=bool,
 )
 @click.option(
-    "-O",
-    "--offline",
-    help="Run Ciphey in offline mode (no hash support)",
-    type=bool,
-    is_flag=True,
-)
-@click.option(
     "--searcher", help="Select the searching algorithm to use",
 )
 # HARLAN TODO XXX
@@ -112,18 +100,8 @@ def print_help(ctx):
 # True for bytes input, False for str
 @click.option(
     "-b",
-    "--bytes-input",
-    help="Forces ciphey to use binary mode for the input. Rather experimental and may break things!",
-    is_flag=True,
-    default=None,
-)
-# HARLAN TODO XXX
-# I switched this to a boolean flag system
-# https://click.palletsprojects.com/en/7.x/options/#boolean-flags
-@click.option(
-    "-B",
-    "--bytes-output",
-    help="Forces ciphey to use binary mode for the output. Rather experimental and may break things!",
+    "--bytes",
+    help="Forces ciphey to use binary mode for the input",
     is_flag=True,
     default=None,
 )
@@ -145,15 +123,15 @@ def print_help(ctx):
     "--appdirs",
     help="Print the location of where Ciphey wants the settings file to be",
     type=bool,
-    is_flag = True,
+    is_flag=True,
 )
+@click.option("-f", "--file", type=click.File("rb"), required=False)
 @click.argument("text_stdin", callback=get_name, required=False)
-@click.argument("file_stdin", type=click.File("rb"), required=False)
-def main(**kwargs) -> Optional[dict]:
+def main(**kwargs):
     """Ciphey - Automated Decryption Tool
     
     Documentation: 
-    https://docs.ciphey.online\n
+    https://github.com/Ciphey/Ciphey/wiki\n
     Discord (support here, we're online most of the day):
     https://discord.ciphey.online/\n
     GitHub: 
@@ -184,13 +162,12 @@ def main(**kwargs) -> Optional[dict]:
     if "appdirs" in kwargs and kwargs["appdirs"]:
         dirs = AppDirs("Ciphey", "Ciphey")
         path_to_config = dirs.user_config_dir
-        print(f"The settings.yml file should be at {os.path.join(path_to_config, 'settings.yml')}")
+        print(
+            f"The settings.yml file should be at {os.path.join(path_to_config, 'settings.yml')}"
+        )
         return None
 
     # Now we create the config object
-    config = iface.Config()
-
-    # Default init the config object
     config = iface.Config()
 
     # Load the settings file into the config
@@ -227,11 +204,8 @@ def main(**kwargs) -> Optional[dict]:
         config.modules += list(module_arg)
 
     # We need to load formats BEFORE we instantiate objects
-    if kwargs["bytes_input"] is not None:
-        config.update_format("in", "bytes")
-
-    if kwargs["bytes_output"] is not None:
-        config.update_format("in", "bytes")
+    if kwargs["bytes"] is not None:
+        config.update_format("bytes")
 
     # Next, load the objects
     params = kwargs["param"]
@@ -251,13 +225,13 @@ def main(**kwargs) -> Optional[dict]:
 
     # Finally, we load the plaintext
     if kwargs["text"] is None:
-        if kwargs["file_stdin"] is not None:
-            kwargs["text"] = kwargs["file_stdin"].read().decode("utf-8")
+        if kwargs["file"] is not None:
+            kwargs["text"] = kwargs["file"].read()
         elif kwargs["text_stdin"] is not None:
             kwargs["text"] = kwargs["text_stdin"]
         else:
             # else print help menu
-            print("[bold red]Error. No inputs were given to Ciphey. [\bold red]")
+            print("[bold red]Error. No inputs were given to Ciphey. [bold red]")
 
             @click.pass_context
             def all_procedure(ctx):
@@ -265,29 +239,28 @@ def main(**kwargs) -> Optional[dict]:
 
             all_procedure()
 
-            # print("No inputs were given to Ciphey. For usage, run ciphey --help")
             return None
-    # if debug mode is on, run without spinner
-    try:
-        if config.verbosity > 0:
+
+    if issubclass(config.objs["format"], type(kwargs["text"])):
+        pass
+    elif config.objs["format"] == str and type(kwargs["text"]) is bytes:
+        kwargs["text"] = kwargs["text"].decode("utf-8")
+    elif config.objs["format"] == bytes and type(kwargs["text"]) is str:
+        kwargs["text"] = kwargs["text"].encode("utf-8")
+    else:
+        raise TypeError(f"Cannot load type {config.format} from {type(kwargs['text'])}")
+
+    result: Optional[str]
+
+    # if debug or quiet mode is on, run without spinner
+    if config.verbosity != 0:
+        result = decrypt(config, kwargs["text"])
+    else:
+        # else, run with spinner if verbosity is 0
+        with yaspin(Spinners.earth, "Thinking") as sp:
+            config.set_spinner(sp)
             result = decrypt(config, kwargs["text"])
-        elif config.verbosity == 0:
-            # else, run with spinner if verbosity is 0
-            with yaspin(Spinners.earth, text="Earth") as sp:
-                result = decrypt(config, kwargs["text"])
-        else:
-            # else its below 0, so quiet mode is on. make it greppable""
-            result = decrypt(config, kwargs["text"])
-    except LookupError as e:
+    if result is None:
         result = "Could not find any solutions."
 
     print(result)
-    return result
-
-
-if __name__ == "__main__":
-    # withArgs because this function is only called
-    # if the program is run in terminal
-    result = main()
-    if result is not None:
-        print(result)

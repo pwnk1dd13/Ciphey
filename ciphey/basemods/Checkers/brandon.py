@@ -106,6 +106,7 @@ class Brandon(ciphey.iface.Checker[str]):
         text = text.lower()
         text = self.mh.strip_puncuation(text)
         text = text.split(" ")
+        text = filter(lambda x: len(x) > 2, text)
         text = set(text)
         return text
 
@@ -146,6 +147,9 @@ class Brandon(ciphey.iface.Checker[str]):
         location = 0
         end = percent
 
+        if text_length <= 0:
+            return False
+
         while location <= text_length:
             # chunks the text, so only gets THRESHOLD chunks of text at a time
             text = list(text)
@@ -153,7 +157,7 @@ class Brandon(ciphey.iface.Checker[str]):
             logger.trace(f"To analyse is {to_analyse}")
             for word in to_analyse:
                 # if word is a stopword, + 1 to the counter
-                if word in var and len(word) > 2:
+                if word in var:
                     logger.trace(
                         f"{word} is in var, which means I am +=1 to the meet_threshold which is {meet_threshold}"
                     )
@@ -207,13 +211,11 @@ class Brandon(ciphey.iface.Checker[str]):
         text = self.clean_text(text)
         logger.trace(f'Text split to "{text}"')
         if text == "":
+            logger.trace("Returning None from Brandon as the text cleaned is none.")
             return None
 
         length_text = len(text)
 
-        # "Phase 1": {0: {"check": 0.02}, 110: {"stop": 0.15}, 150: {"stop": 0.28}}
-
-        # Phase 1 checking
 
         what_to_use = {}
 
@@ -273,7 +275,7 @@ class Brandon(ciphey.iface.Checker[str]):
         _keys = list(key)
         _keys = list(map(int, _keys))
         if length_text >= int(_keys[-1]):
-            what_to_use = key[_keys[-1]]
+            what_to_use = list(key)[_keys.index(_keys[-1])]
         else:
             # this algorithm finds the smallest possible fit for the text
             for counter, i in reversed(list(enumerate(_keys))):
